@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "vuno-jira-confluence": {
+      "command": "node",
+      "args": ["/Users/vuno/Documents/claude/mcp-server.js"]
+    }
+  }
+}

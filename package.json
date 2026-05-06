@@ -1,0 +1,31 @@
+{
+  "name": "vuno-jira-confluence-mcp",
+  "version": "1.0.0",
+  "description": "VUNO Jira/Confluence MCP Server for Claude",
+  "type": "module",
+  "main": "mcp-server.js",
+  "bin": {
+    "vuno-jira-confluence-mcp": "mcp-server.js"
+  },
+  "scripts": {
+    "start": "node mcp-server.js",
+    "dev": "node --watch mcp-server.js"
+  },
+  "keywords": [
+    "mcp",
+    "jira",
+    "confluence",
+    "atlassian"
+  ],
+  "author": "VUNO",
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "latest",
+    "axios": "^1.6.0",
+    "dotenv": "^16.3.1",
+    "zod": "^3.22.4"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
