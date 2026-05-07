@@ -257,6 +257,7 @@ server.registerTool(
       components: z.array(z.string()).optional().describe("컴포넌트 이름 목록"),
       fixVersions: z.array(z.string()).optional().describe("수정 버전 이름 목록"),
       dueDate: z.string().optional().describe("마감일 YYYY-MM-DD"),
+      cc: z.array(z.string()).optional().describe("CC(워처)로 추가할 username 목록"),
     },
   },
   async (args) => {
@@ -280,11 +281,31 @@ server.registerTool(
       };
       if (fields.description === undefined) fields.description = "";
       const response = await jiraClient.post("/rest/api/2/issue", { fields });
+      const issueKey = response.data.key;
+      const ccResults = [];
+      if (Array.isArray(args.cc) && args.cc.length > 0) {
+        for (const username of args.cc) {
+          try {
+            await jiraClient.post(
+              `/rest/api/2/issue/${issueKey}/watchers`,
+              JSON.stringify(username),
+              { headers: { "Content-Type": "application/json" } }
+            );
+            ccResults.push(`  ✅ ${username}`);
+          } catch (err) {
+            const detail = err.response?.data
+              ? ` (${JSON.stringify(err.response.data)})`
+              : "";
+            ccResults.push(`  ❌ ${username}: ${err.message}${detail}`);
+          }
+        }
+      }
+      const ccText = ccResults.length > 0 ? `\nCC:\n${ccResults.join("\n")}` : "";
       return {
         content: [
           {
             type: "text",
-            text: `✅ 이슈가 생성되었습니다: ${response.data.key}`,
+            text: `✅ 이슈가 생성되었습니다: ${issueKey}${ccText}`,
           },
         ],
       };
