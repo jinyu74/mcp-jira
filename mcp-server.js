@@ -17,6 +17,9 @@ const JIRA_TOKEN = process.env.JIRA_TOKEN;
 const CONFLUENCE_URL = process.env.CONFLUENCE_URL;
 const CONFLUENCE_TOKEN = process.env.CONFLUENCE_TOKEN;
 
+// CC(Participant) 커스텀 필드 ID. Vuno Jira 기본값: customfield_10404 (multiuserpicker)
+const JIRA_CC_FIELD = process.env.JIRA_CC_FIELD || "customfield_10404";
+
 if (!JIRA_URL || !JIRA_TOKEN || !CONFLUENCE_URL || !CONFLUENCE_TOKEN) {
   console.error("❌ 에러: .env 파일에 필요한 환경 변수가 없습니다.");
   console.error("   필요: JIRA_URL, JIRA_TOKEN, CONFLUENCE_URL, CONFLUENCE_TOKEN");
@@ -180,6 +183,7 @@ server.registerTool(
                   inward: l.inwardIssue?.key,
                   outward: l.outwardIssue?.key,
                 })),
+                cc: (f[JIRA_CC_FIELD] || []).map((u) => u.name),
                 created: f.created,
                 updated: f.updated,
               },
@@ -257,7 +261,7 @@ server.registerTool(
       components: z.array(z.string()).optional().describe("컴포넌트 이름 목록"),
       fixVersions: z.array(z.string()).optional().describe("수정 버전 이름 목록"),
       dueDate: z.string().optional().describe("마감일 YYYY-MM-DD"),
-      cc: z.array(z.string()).optional().describe("CC(워처)로 추가할 username 목록"),
+      cc: z.array(z.string()).optional().describe("CC(Participant)로 등록할 username 목록"),
     },
   },
   async (args) => {
@@ -280,27 +284,12 @@ server.registerTool(
         ...buildJiraFields(args),
       };
       if (fields.description === undefined) fields.description = "";
+      if (Array.isArray(args.cc) && args.cc.length > 0) {
+        fields[JIRA_CC_FIELD] = args.cc.map((name) => ({ name }));
+      }
       const response = await jiraClient.post("/rest/api/2/issue", { fields });
       const issueKey = response.data.key;
-      const ccResults = [];
-      if (Array.isArray(args.cc) && args.cc.length > 0) {
-        for (const username of args.cc) {
-          try {
-            await jiraClient.post(
-              `/rest/api/2/issue/${issueKey}/watchers`,
-              JSON.stringify(username),
-              { headers: { "Content-Type": "application/json" } }
-            );
-            ccResults.push(`  ✅ ${username}`);
-          } catch (err) {
-            const detail = err.response?.data
-              ? ` (${JSON.stringify(err.response.data)})`
-              : "";
-            ccResults.push(`  ❌ ${username}: ${err.message}${detail}`);
-          }
-        }
-      }
-      const ccText = ccResults.length > 0 ? `\nCC:\n${ccResults.join("\n")}` : "";
+      const ccText = args.cc?.length ? `\nCC: ${args.cc.join(", ")}` : "";
       return {
         content: [
           {
@@ -496,7 +485,7 @@ server.registerTool(
 server.registerTool(
   "jira_add_watcher",
   {
-    description: "Jira 이슈에 워처(CC)를 추가합니다.",
+    description: "Jira 이슈에 워처(지켜보는 사람)를 추가합니다. CC(Participant)와는 다른 개념이며, CC 추가는 jira_add_participant 를 사용하세요.",
     inputSchema: {
       issueKey: z.string(),
       username: z.string().describe("추가할 사용자의 username"),
@@ -515,6 +504,44 @@ server.registerTool(
           {
             type: "text",
             text: `✅ ${args.issueKey} 워처 추가: ${args.username}`,
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [{ type: "text", text: errorText(error) }],
+        isError: true,
+      };
+    }
+  }
+);
+
+// Tool: jira_add_participant
+server.registerTool(
+  "jira_add_participant",
+  {
+    description:
+      "Jira 이슈에 CC(Participant) 를 추가합니다. 기존 CC 는 보존되며, 중복은 자동 제거됩니다. 워처 추가는 jira_add_watcher 를 사용하세요.",
+    inputSchema: {
+      issueKey: z.string(),
+      usernames: z.array(z.string()).describe("CC 로 추가할 username 목록"),
+    },
+  },
+  async (args) => {
+    try {
+      const cur = await jiraClient.get(
+        `/rest/api/2/issue/${args.issueKey}?fields=${JIRA_CC_FIELD}`
+      );
+      const existing = (cur.data.fields?.[JIRA_CC_FIELD] || []).map((u) => u.name);
+      const merged = Array.from(new Set([...existing, ...args.usernames]));
+      await jiraClient.put(`/rest/api/2/issue/${args.issueKey}`, {
+        fields: { [JIRA_CC_FIELD]: merged.map((name) => ({ name })) },
+      });
+      return {
+        content: [
+          {
+            type: "text",
+            text: `✅ ${args.issueKey} CC 추가: ${args.usernames.join(", ")}\n현재 CC: ${merged.join(", ")}`,
           },
         ],
       };

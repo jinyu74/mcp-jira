@@ -7,9 +7,11 @@ Claude에서 직접 VUNO의 Jira와 Confluence에 접근하는 MCP(Model Context
 ### Jira 통합
 
 - 🔍 **이슈 검색**: JQL을 사용한 고급 검색
-- 📋 **이슈 상세 조회**: 완벽한 이슈 정보 확인
-- ✍️ **이슈 생성**: 새로운 태스크/버그/스토리 생성
+- 📋 **이슈 상세 조회**: 완벽한 이슈 정보 확인 (CC 포함)
+- ✍️ **이슈 생성**: 새로운 태스크/버그/스토리 생성 (CC 동시 지정 가능)
 - 📝 **이슈 수정**: 담당자, 댓글 등 업데이트
+- 👥 **CC(Participant) 추가**: 기존 이슈에 참여자 추가 (워처와 분리된 개념)
+- 👀 **워처 추가**: 이슈 변경 알림을 받을 사용자 등록
 - 📊 **프로젝트 조회**: 전체 프로젝트 목록 확인
 
 ### Confluence 통합
@@ -167,6 +169,26 @@ node --version  # 18.0.0 이상 필요
 1. **SETUP_GUIDE.md** 문제 해결 섹션 확인
 2. `.env` 파일과 Claude 설정 재확인
 3. Claude 완전 재시작 (캐시 지우기 포함)
+
+---
+
+## 📝 변경 이력
+
+### 2026-05-08
+
+- **CC(Participant)와 워처(Watcher) 분리**
+  - `jira_create_issue` 의 `cc` 인자가 더 이상 워처로 등록되지 않고, Jira 커스텀 필드 **CC (Participant)** (`customfield_10404`) 로 등록됩니다.
+  - 신규 도구 `jira_add_participant` — 기존 이슈에 CC를 추가합니다(기존 CC 보존, 중복 자동 제거).
+  - `jira_add_watcher` 는 그대로 유지 — "이슈를 지켜보고 알림만 받는" 사용자 등록 용도입니다.
+  - `jira_get_issue` 응답에 `cc` 필드가 포함됩니다.
+  - 다른 인스턴스 이식성을 위해 `JIRA_CC_FIELD` 환경변수로 customfield ID 오버라이드 가능 (기본값: `customfield_10404`).
+- **사용 가이드**
+  - 어떤 사용자에게 "이슈에 공식 참여시키고 싶다 / 메일에 CC하고 싶다" → `jira_add_participant` 또는 `jira_create_issue(cc=[...])`
+  - 단순히 이슈 변경 알림만 받고 싶다 → `jira_add_watcher`
+
+### 2026-05-07
+
+- `jira_create_issue` 에 `cc` 옵션 추가 (당시에는 워처로 등록).
 
 ---
 
