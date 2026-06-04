@@ -20,6 +20,10 @@ const CONFLUENCE_TOKEN = process.env.CONFLUENCE_TOKEN;
 // CC(Participant) 커스텀 필드 ID. Vuno Jira 기본값: customfield_10404 (multiuserpicker)
 const JIRA_CC_FIELD = process.env.JIRA_CC_FIELD || "customfield_10404";
 
+// 상태 전환 시 해결책(resolution) 자동 설정 기준
+const RESOLVED_CATEGORY = "done"; // Jira statusCategory.key
+const DEFAULT_RESOLUTION = "완료"; // done 카테고리 전환 시 기본 해결책
+
 if (!JIRA_URL || !JIRA_TOKEN || !CONFLUENCE_URL || !CONFLUENCE_TOKEN) {
   console.error("❌ 에러: .env 파일에 필요한 환경 변수가 없습니다.");
   console.error("   필요: JIRA_URL, JIRA_TOKEN, CONFLUENCE_URL, CONFLUENCE_TOKEN");
@@ -353,56 +357,102 @@ server.registerTool(
   "jira_transition_issue",
   {
     description:
-      "Jira 이슈의 상태를 전환합니다. transitionId 또는 transitionName 중 하나를 지정합니다.",
+      "Jira 이슈의 상태를 전환합니다. transitionId 또는 transitionName 중 하나를 지정합니다. '완료(done)' 카테고리로 전환하면 해결책(resolution)을 자동으로 '완료'로 설정합니다.",
     inputSchema: {
       issueKey: z.string(),
       transitionId: z.string().optional(),
       transitionName: z.string().optional().describe("전환 이름 (예: 'Done')"),
       comment: z.string().optional(),
+      resolution: z
+        .string()
+        .optional()
+        .describe("해결책 이름. 미지정 시 '완료' 카테고리로 전환할 때만 '완료' 자동 설정"),
     },
   },
   async (args) => {
     try {
-      let id = args.transitionId;
-      if (!id) {
-        if (!args.transitionName) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: "에러: transitionId 또는 transitionName 이 필요합니다.",
-              },
-            ],
-            isError: true,
-          };
-        }
-        const meta = await jiraClient.get(
-          `/rest/api/2/issue/${args.issueKey}/transitions`
-        );
-        const match = (meta.data.transitions || []).find(
-          (t) => t.name.toLowerCase() === args.transitionName.toLowerCase()
-        );
-        if (!match) {
-          const names = (meta.data.transitions || []).map((t) => t.name).join(", ");
-          return {
-            content: [
-              {
-                type: "text",
-                text: `에러: '${args.transitionName}' 전환을 찾을 수 없습니다. 가능: ${names}`,
-              },
-            ],
-            isError: true,
-          };
-        }
-        id = match.id;
+      if (!args.transitionId && !args.transitionName) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "에러: transitionId 또는 transitionName 이 필요합니다.",
+            },
+          ],
+          isError: true,
+        };
       }
-      const body = { transition: { id } };
+
+      // 전환 메타데이터를 항상 조회: id 확정 + 대상 상태 카테고리 + resolution 화면 존재 여부
+      const meta = await jiraClient.get(
+        `/rest/api/2/issue/${args.issueKey}/transitions?expand=transitions.fields`
+      );
+      const transitions = meta.data.transitions || [];
+      const transition = args.transitionId
+        ? transitions.find((t) => t.id === args.transitionId)
+        : transitions.find(
+            (t) => t.name.toLowerCase() === args.transitionName.toLowerCase()
+          );
+      if (!transition) {
+        const names = transitions.map((t) => t.name).join(", ");
+        const target = args.transitionId
+          ? `id '${args.transitionId}'`
+          : `'${args.transitionName}'`;
+        return {
+          content: [
+            {
+              type: "text",
+              text: `에러: ${target} 전환을 찾을 수 없습니다. 가능: ${names}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      const body = { transition: { id: transition.id } };
       if (args.comment) {
         body.update = { comment: [{ add: { body: args.comment } }] };
       }
+
+      // 해결책 결정: 명시 값 우선, 없으면 done 카테고리 전환에 한해 기본값
+      const targetCategory = transition.to?.statusCategory?.key;
+      const wantResolution =
+        args.resolution !== undefined
+          ? args.resolution
+          : targetCategory === RESOLVED_CATEGORY
+            ? DEFAULT_RESOLUTION
+            : undefined;
+
+      // 이 인스턴스의 전환 API는 resolution을 name이 아닌 id로만 받으므로
+      // allowedValues에서 name→id를 매핑한다.
+      let resolutionNote = "";
+      if (wantResolution) {
+        const resField = transition.fields?.resolution;
+        if (resField) {
+          const allowed = resField.allowedValues || [];
+          const matched = allowed.find(
+            (v) => v.name?.toLowerCase() === wantResolution.toLowerCase()
+          );
+          if (matched) {
+            body.fields = { resolution: { id: matched.id } };
+          } else {
+            const names = allowed.map((v) => v.name).join(", ");
+            resolutionNote = `\n⚠️ 해결책('${wantResolution}')이 유효하지 않아 설정하지 못했습니다. 가능: ${names}`;
+          }
+        } else {
+          resolutionNote = `\n⚠️ 해결책('${wantResolution}')은 이 전환 화면에 없어 설정하지 못했습니다.`;
+        }
+      }
+
       await jiraClient.post(`/rest/api/2/issue/${args.issueKey}/transitions`, body);
+      const resText = body.fields?.resolution ? ` (해결책: ${wantResolution})` : "";
       return {
-        content: [{ type: "text", text: `✅ ${args.issueKey} 상태 전환 완료` }],
+        content: [
+          {
+            type: "text",
+            text: `✅ ${args.issueKey} 상태 전환 완료${resText}${resolutionNote}`,
+          },
+        ],
       };
     } catch (error) {
       return {
